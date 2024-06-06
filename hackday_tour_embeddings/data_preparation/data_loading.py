@@ -1,13 +1,17 @@
-import os
-
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 ADP_REQUEST_PATH = "/mnt/analytics/cleaned/v1/ActivityDetailPageRequest"
 DESTINATION_PAGE_REQUEST_PATH = "/mnt/analytics/cleaned/v1/DestinationPageRequest"
+BOOKING_PATH = "/mnt/analytics/cleaned/v1/BookAction"
 
 
-def load_visitor_click_data(spark: SparkSession, start_date: str, end_date: str):
+def load_visitor_click_data(
+    spark: SparkSession,
+    start_date: str,
+    end_date: str,
+    load_location: bool = False,
+):
     BASE_COLUMNS = [
         F.col("event_properties.timestamp").alias("timestamp"),
         F.col("header.platform").alias("platform"),
@@ -18,11 +22,8 @@ def load_visitor_click_data(spark: SparkSession, start_date: str, end_date: str)
         F.col("event_name"),
     ]
 
-    adp_last_date = spark.read.parquet(
-        os.path.join(ADP_REQUEST_PATH, f"date={end_date}")
-    )
     adp_request_df = (
-        spark.read.schema(adp_last_date.schema)
+        spark.read.options(mergeSchema="true")
         .parquet(ADP_REQUEST_PATH)
         .select(BASE_COLUMNS + [F.col("tour_id")])
         .filter(F.col("date").between(start_date, end_date))
@@ -30,15 +31,37 @@ def load_visitor_click_data(spark: SparkSession, start_date: str, end_date: str)
         .filter(F.col("tour_id") > 0)
     )
 
-    destination_page_last_date = spark.read.parquet(
-        os.path.join(DESTINATION_PAGE_REQUEST_PATH, f"date={end_date}")
-    )
+    if not load_location:
+        return adp_request_df.withColumn("location_type", F.lit(None)).withColumn(
+            "location_id", F.lit(None)
+        )
+
     destination_page_request_df = (
-        spark.read.schema(destination_page_last_date.schema)
+        spark.read.options(mergeSchema="true")
         .parquet(DESTINATION_PAGE_REQUEST_PATH)
         .select(BASE_COLUMNS + [F.col("location_type"), F.col("location_id")])
         .filter(F.col("location_type").isNotNull())
         .filter(F.col("location_id").isNotNull())
     )
 
-    return adp_request_df.unionByName(destination_page_request_df, allowMissingColumns=True)
+    return adp_request_df.unionByName(
+        destination_page_request_df, allowMissingColumns=True
+    )
+
+
+def load_visitor_booking_data(
+    spark: SparkSession,
+    start_date: str,
+    end_date: str,
+):
+    return (
+        spark.read.options(mergeSchema="true")
+        .parquet(BOOKING_PATH)
+        .filter(F.col("date").between(start_date, end_date))
+        .select(
+            "user.visitor_id",
+            "pageview_properties.tour_ids",
+            "event_properties.timestamp",
+            "date",
+        )
+    )
