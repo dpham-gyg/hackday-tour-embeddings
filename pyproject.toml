@@ -5,6 +5,13 @@ description = ""
 authors = ["Duy Pham <duy.pham@getyourguide.com>"]
 readme = "README.md"
 
+
+[[tool.poetry.source]]
+name = "codeartifact"
+url = "https://getyourguide-130607246975.d.codeartifact.eu-central-1.amazonaws.com/pypi/private/simple/"
+priority = "explicit"
+
+
 [tool.poetry.dependencies]
 python = "^3.10"
 pyspark = "^3.5.1"
