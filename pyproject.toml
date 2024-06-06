@@ -17,6 +17,7 @@ black = "^24.4.2"
 flake8 = "^7.0.0"
 mypy = "^1.10.0"
 pylint = "^3.2.2"
+databricks-rocket = "^2.1.0"
 
 [build-system]
 requires = ["poetry-core"]
