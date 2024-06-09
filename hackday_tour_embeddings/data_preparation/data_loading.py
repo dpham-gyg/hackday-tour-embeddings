@@ -1,9 +1,15 @@
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
-ADP_REQUEST_PATH = "/mnt/analytics/cleaned/v1/ActivityDetailPageRequest"
-DESTINATION_PAGE_REQUEST_PATH = "/mnt/analytics/cleaned/v1/DestinationPageRequest"
-BOOKING_PATH = "/mnt/analytics/cleaned/v1/BookAction"
+from hackday_tour_embeddings.data_preparation import token_builder
+
+NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/narratives/all"
+NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/narratives/train"
+NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/narratives/test"
+TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/tour-vocab/"
+
+MIN_NARRATIVE_SIZE = 2
+MIN_VISITORS_PER_TOUR = 20
 
 
 def load_visitor_click_data(
@@ -12,6 +18,9 @@ def load_visitor_click_data(
     end_date: str,
     load_location: bool = False,
 ):
+    ADP_REQUEST_PATH = "/mnt/analytics/cleaned/v1/ActivityDetailPageRequest"
+    DESTINATION_PAGE_REQUEST_PATH = "/mnt/analytics/cleaned/v1/DestinationPageRequest"
+
     BASE_COLUMNS = [
         F.col("event_properties.timestamp").alias("timestamp"),
         F.col("header.platform").alias("platform"),
@@ -49,19 +58,109 @@ def load_visitor_click_data(
     )
 
 
-def load_visitor_booking_data(
-    spark: SparkSession,
-    start_date: str,
-    end_date: str,
-):
-    return (
-        spark.read.options(mergeSchema="true")
-        .parquet(BOOKING_PATH)
-        .filter(F.col("date").between(start_date, end_date))
-        .select(
-            "user.visitor_id",
-            "pageview_properties.tour_ids",
-            "event_properties.timestamp",
-            "date",
-        )
+def split_visitor_clicks_to_train_test(visitor_clicks: DataFrame, test_ratio: float):
+    visitors = visitor_clicks.select("visitor_id").distinct()
+    tours = visitor_clicks.select("tour_id").distinct()
+
+    train_visitors, test_visitors = visitors.randomSplit([1 - test_ratio, test_ratio])
+    train_tours, test_tours = tours.randomSplit([1 - test_ratio, test_ratio])
+
+    train_df = visitor_clicks.join(train_visitors, on="visitor_id").join(
+        train_tours, on="tour_id"
     )
+    test_df = visitor_clicks.join(test_visitors, on="visitor_id").join(
+        test_tours, on="tour_id"
+    )
+
+    return train_df, test_df
+
+
+def extract_tour_vocab_from_narratives(visitor_clicks: DataFrame):
+    """
+    visitor_clicks: DataFrame must have columns: visitor_id, tour_id
+    """
+    df = (
+        visitor_clicks.select("tour_id")
+        .dropDuplicates()
+        .sort("tour_id")
+        .withColumn("tour_token", F.concat_ws("", F.lit("t"), F.col("tour_id")))
+        .withColumn("tour_index", F.monotonically_increasing_id() + 1)
+        .select("tour_token", "tour_index")
+    )
+
+    w = Window.orderBy("tour_index")
+    return df.withColumn("tour_index", F.row_number().over(w))
+
+
+def load_tour_index_map(spark: SparkSession, path: str):
+    """
+    res = {}
+    for f in files:
+        with open(f) as f:
+            for line in f:
+                line = json.loads(line)
+                res[line["tour_token"]] = line["tour_index"]
+    return res
+    """
+
+    tour_indices = spark.read.json(path).toPandas().to_dict("records")
+    return {x["tour_token"]: x["tour_index"] for x in tour_indices}
+
+
+def load_tour_bert_embeddings(spark: SparkSession):
+    raw_embs = (
+        spark.table("gdp.sl_distilbert_keyword_tour_embeddings")
+        .withColumn("tour_token", F.concat_ws("", F.lit("t"), F.col("tour_id")))
+        .select("tour_token", "description_embeddings")
+    )
+
+    tour_indices = spark.read.json(TOUR_INDEX_PATH)
+
+    return raw_embs.join(tour_indices, on="tour_token").select(
+        "tour_index", "description_embeddings"
+    )
+
+
+def run(start_date, end_date, spark):
+    print("Loading visitor click data")
+    events = load_visitor_click_data(spark, start_date, end_date)
+    print(
+        f"there are {events.select('tour_id').dropDuplicates().count()} distinct tours"
+    )
+
+    w = Window.partitionBy("tour_id")
+    events = events.withColumn(
+        "n_visitors", F.size(F.collect_set(F.col("visitor_id")).over(w))
+    )
+    events = events.filter(F.col("n_visitors") >= MIN_VISITORS_PER_TOUR)
+
+    print(
+        f"there are {events.select('tour_id').dropDuplicates().count()} tours with at least {MIN_VISITORS_PER_TOUR} visitors"
+    )
+    print(f"there are {events.select('visitor_id').dropDuplicates().count()} visitors")
+
+    tour_vocab = extract_tour_vocab_from_narratives(events)
+    tour_vocab.write.mode("overwrite").json(TOUR_INDEX_PATH)
+    print(f"tour vocab size = {tour_vocab.count()}, saved to {TOUR_INDEX_PATH}")
+
+    train_events, test_events = split_visitor_clicks_to_train_test(
+        events, test_ratio=0.1
+    )
+
+    train_narratives = token_builder.compute_narratives(
+        train_events, min_narrative_size=MIN_NARRATIVE_SIZE
+    )
+    test_narratives = token_builder.compute_narratives(
+        test_events, min_narrative_size=MIN_NARRATIVE_SIZE
+    )
+    all_narratives = token_builder.compute_narratives(
+        events, min_narrative_size=MIN_NARRATIVE_SIZE
+    )
+
+    print(f"training set size = {train_narratives.count()}")
+    print(f"test set size = {test_narratives.count()}")
+    print(f"all narratives size = {all_narratives.count()}")
+
+    train_narratives.write.mode("overwrite").json(NARRATIVES_PATH_TRAIN)
+    test_narratives.write.mode("overwrite").json(NARRATIVES_PATH_TEST)
+    all_narratives.write.mode("overwrite").json(NARRATIVES_PATH_ALL)
