@@ -19,6 +19,7 @@ pandas = "^2.2.2"
 torch = "^2.3.1"
 fire = "^0.6.0"
 torchvision = "^0.18.1"
+pytorch-ignite = "^0.5.0.post2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.2"

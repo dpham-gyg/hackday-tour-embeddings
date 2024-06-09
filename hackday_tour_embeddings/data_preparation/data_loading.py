@@ -1,15 +1,29 @@
+import numpy as np
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
+import torch
 
 from hackday_tour_embeddings.data_preparation import token_builder
 
-NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/narratives/all"
-NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/narratives/train"
-NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/narratives/test"
-TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/tour-vocab/"
+# NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/narratives/all"
+# NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/narratives/train"
+# NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/narratives/test"
+# TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/tour-vocab/"
 
-MIN_NARRATIVE_SIZE = 2
-MIN_VISITORS_PER_TOUR = 20
+# NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/middle/narratives/all"
+# NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/middle/narratives/train"
+# NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/middle/narratives/test"
+# TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/middle/tour-vocab/"
+
+NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/all"
+NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/train"
+NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/test"
+TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/smaller/tour-vocab/"
+
+MIN_NARRATIVE_SIZE = 10 
+MIN_VISITORS_PER_TOUR = 50
+
+BERT_EMB_SIZE = 768
 
 
 def load_visitor_click_data(
@@ -116,9 +130,28 @@ def load_tour_bert_embeddings(spark: SparkSession):
 
     tour_indices = spark.read.json(TOUR_INDEX_PATH)
 
-    return raw_embs.join(tour_indices, on="tour_token").select(
-        "tour_index", "description_embeddings"
+    embs_collected = (
+        raw_embs.join(tour_indices, on="tour_token")
+        .select("tour_index", "description_embeddings")
+        .toPandas().to_dict("records")
     )
+
+    return {x["tour_index"]: x["description_embeddings"] for x in embs_collected}
+
+
+def prepare_bert_emb_tensor(bert_emb_matrix, tour_index_map):
+    bert_default_emb = np.zeros(BERT_EMB_SIZE)
+
+    bert_collected_embs = {0: bert_default_emb}
+    for _, tour_index in tour_index_map.items():
+        if tour_index not in bert_emb_matrix:
+            bert_collected_embs[tour_index] = bert_default_emb
+        else:
+            bert_collected_embs[tour_index] = bert_emb_matrix[tour_index]
+
+    sorted_embs =  sorted(bert_collected_embs.items(), key=lambda x: x[0])
+    sorted_embs = [x[1] for x in sorted_embs]
+    return torch.Tensor(sorted_embs)
 
 
 def run(start_date, end_date, spark):

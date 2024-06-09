@@ -903,8 +903,8 @@ files = [
 [package.dependencies]
 numpy = [
     {version = ">=1.22.4", markers = "python_version < \"3.11\""},
-    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
     {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
+    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
 ]
 python-dateutil = ">=2.8.2"
 pytz = ">=2020.1"
@@ -1129,8 +1129,8 @@ astroid = ">=3.2.2,<=3.3.0-dev0"
 colorama = {version = ">=0.4.5", markers = "sys_platform == \"win32\""}
 dill = [
     {version = ">=0.2", markers = "python_version < \"3.11\""},
-    {version = ">=0.3.6", markers = "python_version >= \"3.11\" and python_version < \"3.12\""},
     {version = ">=0.3.7", markers = "python_version >= \"3.12\""},
+    {version = ">=0.3.6", markers = "python_version >= \"3.11\" and python_version < \"3.12\""},
 ]
 isort = ">=4.2.5,<5.13.0 || >5.13.0,<6"
 mccabe = ">=0.6,<0.8"
@@ -1208,6 +1208,21 @@ files = [
 
 [package.dependencies]
 six = ">=1.5"
+
+[[package]]
+name = "pytorch-ignite"
+version = "0.5.0.post2"
+description = "A lightweight library to help with training neural networks in PyTorch."
+optional = false
+python-versions = "*"
+files = [
+    {file = "pytorch-ignite-0.5.0.post2.tar.gz", hash = "sha256:052510ec92fa3e4b3a0ba2296b09b3465ad12eadf657ba58e0760dbde0f3200d"},
+    {file = "pytorch_ignite-0.5.0.post2-py3-none-any.whl", hash = "sha256:d1f60c6ed17fa0f03920f20297de6614c8ed5cb6ad6054160d22de248ccd761f"},
+]
+
+[package.dependencies]
+packaging = "*"
+torch = ">=1.3,<3"
 
 [[package]]
 name = "pytz"
@@ -1537,4 +1552,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "681da02d872f942b1999e8def4a76929bd7816caa67d0d72ade7db8089bee29e"
+content-hash = "812551bf8479ed84c1bc3a97f33c8e6834f33e9003b82dda644d236f5c8ae9c3"
