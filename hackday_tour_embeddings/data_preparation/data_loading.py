@@ -15,13 +15,19 @@ from hackday_tour_embeddings.data_preparation import token_builder
 # NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/middle/narratives/test"
 # TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/middle/tour-vocab/"
 
-NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/all"
-NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/train"
-NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/test"
-TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/smaller/tour-vocab/"
+# NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/all"
+# NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/train"
+# NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/smaller/narratives/test"
+# TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/smaller/tour-vocab/"
 
-MIN_NARRATIVE_SIZE = 10 
-MIN_VISITORS_PER_TOUR = 50
+NARRATIVES_PATH_ALL = "/mnt/data/duy.pham/hackdays-24-06/tiny/narratives/all"
+NARRATIVES_PATH_TRAIN = "/mnt/data/duy.pham/hackdays-24-06/tiny/narratives/train"
+NARRATIVES_PATH_TEST = "/mnt/data/duy.pham/hackdays-24-06/tiny/narratives/test"
+TOUR_INDEX_PATH = "/mnt/data/duy.pham/hackdays-24-06/tiny/tour-vocab/"
+
+MIN_NARRATIVE_SIZE = 20
+MAX_NARRATIVE_SIZE = 100
+MIN_VISITORS_PER_TOUR = 500
 
 BERT_EMB_SIZE = 768
 

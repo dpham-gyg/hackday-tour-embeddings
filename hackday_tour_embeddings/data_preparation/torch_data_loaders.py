@@ -8,23 +8,6 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 from hackday_tour_embeddings.data_preparation import data_loading
 
 
-def create_torch_train_test_data_loaders(
-    narrative_files,
-    tour_index_files,
-    batch_size: int,
-):
-    """
-    dataset = NarrativesDataset(spark, narrative_file, tour_index_file)
-    train_ds, test_ds = torch.utils.data.random_split(dataset, [0.9, 0.1])
-
-    return DataLoader(train_ds, batch_size=64, shuffle=True), DataLoader(
-        test_ds, batch_size=64, shuffle=False
-    )
-    """
-    dataset = NarrativesDatasetIterable(narrative_files, tour_index_files)
-    return DataLoader(dataset, batch_size=batch_size)
-
-
 def list_dbfs_readable_files(path, dbutils) -> List[str]:
     return [
         x.path.replace("dbfs:/", "/dbfs/")
@@ -97,7 +80,7 @@ class NarrativesDatasetIterable(IterableDataset):
 
                     narrative_multi_hot = (
                         torch.nn.functional.one_hot(
-                            narrative_tensor, num_classes=len(self.tour_indices) + 1
+                        narrative_tensor, num_classes=len(self.tour_indices) + 1
                         )
                         .max(dim=0)
                         .values

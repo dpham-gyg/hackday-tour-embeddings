@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import logging
 from functools import partial
 from typing import Dict
 
@@ -11,7 +12,10 @@ from ignite.engine import (
     create_supervised_trainer,
 )
 from ignite.handlers import ModelCheckpoint, TensorboardLogger, global_step_from_engine
-from ignite.metrics import ROC_AUC
+from ignite.contrib.handlers import ProgressBar
+from ignite.handlers import EarlyStopping
+
+from ignite.metrics import Precision, Recall
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -20,8 +24,9 @@ from hackday_tour_embeddings.data_preparation import data_loading
 
 TOUR_EMB_SIZE = 300
 # N_TOURS = 135286
-N_TOURS = 106114
-# N_TOURS = 123893
+# N_TOURS = 106114
+# N_TOURS = 12389
+N_TOURS = 29609
 
 
 MODEL_ARTFACT_PATH = "/mnt/data/duy.pham/hackdays-24-06/models/"
@@ -41,11 +46,11 @@ class VAE(nn.Module):
         self.tour_emb_fc1 = nn.Linear(data_loading.BERT_EMB_SIZE, TOUR_EMB_SIZE)
         self.tour_emb_fc2 = nn.Linear(TOUR_EMB_SIZE, 1)
 
-        self.fc1 = nn.Linear(n_tours, 400)
-        self.fc21 = nn.Linear(400, 20)
-        self.fc22 = nn.Linear(400, 20)
-        self.fc3 = nn.Linear(20, 400)
-        self.fc4 = nn.Linear(400, n_tours)
+        self.fc1 = nn.Linear(n_tours, 256)
+        self.fc21 = nn.Linear(256, 20)
+        self.fc22 = nn.Linear(256, 20)
+        self.fc3 = nn.Linear(20, 256)
+        self.fc4 = nn.Linear(256, n_tours)
         self.n_tours = n_tours
 
         # Learnable tour embeddings
@@ -55,17 +60,6 @@ class VAE(nn.Module):
         self.bert_emb_matrix = torch.nn.Embedding.from_pretrained(
             bert_emb_matrix
         ).requires_grad_(False)
-
-    def embedding_mix(self, bert_embs):
-        """
-        tour_embs: (batch_size, n_tours, TOUR_EMB_SIZE)
-        bert_embs: (batch_size, n_tours, BERT_EMB_SIZE)
-        """
-        # concat: (batch_size, n_tours, TOUR_EMB_SIZE + BERT_EMB_SIZE)
-        # concat = torch.cat([tour_embs, bert_embs], dim=-1)
-        # output (batch_size, n_tours, 1)
-        tours_embs = self.tour_emb_fc1(bert_embs)
-        return self.tour_emb_fc2(tours_embs).squeeze()
 
     def encode(self, x):
         h1 = F.relu(self.fc1(x))
@@ -81,9 +75,20 @@ class VAE(nn.Module):
         return torch.sigmoid(self.fc4(h3))
 
     def forward(self, x):
-        # tour_embs = self.tour_emb_matrix(x)
-        # bert_embs = self.bert_emb_matrix(x.to(torch.int32))
-        # x = self.embedding_mix(bert_embs)
+        # one_hot = (
+        # torch.nn.functional.one_hot(x.to(torch.long), num_classes=N_TOURS)
+        # .max(dim=0)
+        # .values.to(torch.float32)
+        # )
+        # tour_embs = self.tour_emb_matrix(x * torch.argmax(x, dim=1).unsqueeze(1))
+        # (batch_size, n_tours, BERT_EMB_SIZE)
+        x = self.bert_emb_matrix(
+            (x * torch.argmax(x, dim=1).unsqueeze(1)).to(torch.int32)
+        )
+        x = self.tour_emb_fc1(x)
+        # (batch_size, n_tours)
+        x = self.tour_emb_fc2(x).squeeze()
+
         # mu, logvar = self.encode(x.view(-1, self.n_tours))
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
@@ -92,6 +97,11 @@ class VAE(nn.Module):
 
 def loss_function(y, x, mu, logvar):
     # print(f"computing loss between {y} and {x}")
+    # x= (
+    # torch.nn.functional.one_hot(x.to(torch.long), num_classes=N_TOURS)
+    # .max(dim=0)
+    # .values.to(torch.float32)
+    # )
     BCE = F.binary_cross_entropy(y, x, reduction="sum")
     # print("BCE", BCE.item())
     # reconstruction_loss = F.mse_loss(y, x.view(-1, N_TOURS), reduction='sum')
@@ -130,8 +140,8 @@ def train(epochs: int, train_dl: DataLoader, n_tours, bert_emb_matrix) -> nn.Mod
 
         print(f"Epoch: {epoch}, Loss: {train_loss / (batch_idx + 1)}")
 
-    torch.save(model.state_dict(), MODEL_ARTFACT_PATH + "/vae-small/")
-    print("Model saved to ", MODEL_ARTFACT_PATH + "/vae-small/")
+    torch.save(model.state_dict(), MODEL_ARTFACT_PATH + "/vae-tiny/")
+    print("Model saved to ", MODEL_ARTFACT_PATH + "/vae-tiny/")
     return model
 
 
@@ -150,27 +160,47 @@ def train_with_ignite(
         partial(train_step, model=model, optimizer=optimizer, device=device)
     )
 
-    evaluator = create_supervised_evaluator(model, metrics={"auc": ROC_AUC()})
+    evaluator = Engine(partial(validation_step, model=model, device=device))
 
-    model_checkpoint = ModelCheckpoint(
-        "checkpoint",
-        n_saved=2,
-        filename_prefix="best",
-        score_function=lambda engine: engine.state.metrics["auc"],
-        score_name="accuracy",
-        global_step_transform=global_step_from_engine(trainer),
+    trainer.add_event_handler(
+        Events.EPOCH_COMPLETED,
+        lambda: evaluator.run(validation_dl),
     )
 
     trainer.add_event_handler(
         Events.EPOCH_COMPLETED,
-        partial(validation, evaluator=evaluator, validation_dl=validation_dl),
+        lambda engine: print(f"Epoch {engine.state.epoch} completed"),
     )
 
+    trainer.add_event_handler(
+        Events.EPOCH_COMPLETED,
+        lambda engine: print(engine.state.metrics),
+    )
+
+    handler = EarlyStopping(
+        patience=10,
+        score_function=lambda engine: engine.state.metrics["recall"],
+        trainer=trainer,
+    )
+    model_checkpoint = ModelCheckpoint(
+        "checkpoint",
+        n_saved=2,
+        filename_prefix="best",
+        score_function=lambda engine: engine.state.metrics["recall"],
+        score_name="recall",
+        global_step_transform=global_step_from_engine(trainer),
+        require_empty=False,
+    )
+    evaluator.add_event_handler(Events.COMPLETED, handler)
     evaluator.add_event_handler(
         Events.COMPLETED,
         model_checkpoint,
         {"model": model},
     )
+
+    Precision().attach(evaluator, "precision")
+    Recall().attach(evaluator, "recall")
+    ProgressBar().attach(trainer)
 
     tb_logger = TensorboardLogger(log_dir="tensorboard")
 
@@ -198,12 +228,21 @@ def train_step(engine, batch, optimizer, model, device):
     optimizer.zero_grad()
     recon_batch, mu, logvar = model(batch)
     loss = loss_function(recon_batch, batch, mu, logvar)
-    # print(f"loss = {loss.item()}")
     loss.backward()
     optimizer.step()
     return loss.item()
 
 
-def validation(trainer, evaluator, validation_dl):
-    state = evaluator.run(validation_dl)
-    print(trainer.state.epoch, state.metrics)
+def validation_step(engine, batch, model, device):
+    batch = batch.to(device)
+    # batch = (
+    # torch.nn.functional.one_hot(batch.to(torch.long), num_classes=N_TOURS)
+    # .max(dim=0)
+    # .values.to(torch.float32)
+    # )
+    model.eval()
+    with torch.no_grad():
+        y_pred, mu, logvar = model(batch)
+        y_pred = torch.softmax(y_pred, dim=1).to(torch.int32)
+
+    return y_pred, batch
